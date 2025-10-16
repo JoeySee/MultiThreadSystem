@@ -1,0 +1,34 @@
+- How many threads are you going to use? Specify the work that you intend each thread to perform.
+I intend to have one thread per train.
+
+- Do the threads work independently? Or, is there an overall "controller" thread?
+There will not be a controller thread.
+
+- How many mutexes are you going to use? Specify the operation that each mutex will guard.
+All data will be stored in copies of a template struct with pointers to fields similar to the tutorial code.
+As such, I will use a single mutex to regulate all modification to this struct.
+I also will need a mutex to identify when a train is crossing the track.
+
+- Will the main thread be idle? If not, what will it be doing?
+It will be idle.
+
+- How are you going to represent stations (which are collections of loaded trains ready to depart)? That is, what type of data structure will you use?
+Pair of priority queues representing east- and west-bound traffic.
+
+- How are you going to ensure that data structures in your program will not be modified concurrently?
+Convars and condition double checking
+
+- How many convars are you going to use?
+1. load_to_queue
+
+2. send_to_track
+
+- Describe the condition that the convar will represent.
+- Which mutex is associated with the convar? Why?
+- What operation should be performed once pthread_cond_wait() has been unblocked and re-acquired the mutex?
+
+
+- Briefly sketch the overall algorithm you will use. You may use sentences such as:
+
+
+
