@@ -7,6 +7,7 @@ There will not be a controller thread.
 - How many mutexes are you going to use? Specify the operation that each mutex will guard.
 Two to track if the priority queues representing the stations is being modified.
 One to track if the count of trains standing by for queueing is being modified.
+One to track if a train is crossing the track.
 
 - Will the main thread be idle? If not, what will it be doing?
 It will be idle.
@@ -19,8 +20,15 @@ Convars and condition double checking
 
 - How many convars are you going to use?
 1. loading_done
+- Sent when loading of a train into its queue is completed.
+- Tied to one of the station mutexes.
+- Should attempt to begin next load into queue.
 
 2. sending_done
+- Sent when a train crosses the track.
+- Tied to the crossing mutex.
+- Determine if train of current thread should cross and send it if it should.
+
 
 - Describe the condition that the convar will represent.
 - Which mutex is associated with the convar? Why?
