@@ -16,23 +16,18 @@ It will be idle.
 Pair of priority queues representing east- and west-bound traffic.
 
 - How are you going to ensure that data structures in your program will not be modified concurrently?
-Convars and condition double checking
+Convars and condition checking.
 
 - How many convars are you going to use?
 1. loading_done
-- Sent when loading of a train into its queue is completed.
-- Tied to one of the station mutexes.
-- Should attempt to begin next load into queue.
+    - Sent when loading of a train into its queue is completed.
+    - Tied to one of the station mutexes.
+    - Should attempt to begin next load into queue.
 
 2. sending_done
-- Sent when a train crosses the track.
-- Tied to the crossing mutex.
-- Determine if train of current thread should cross and send it if it should.
-
-
-- Describe the condition that the convar will represent.
-- Which mutex is associated with the convar? Why?
-- What operation should be performed once pthread_cond_wait() has been unblocked and re-acquired the mutex?
+    - Sent when a train crosses the track.
+    - Tied to the crossing mutex.
+    - Determine if train of current thread should cross and send it if it should.
 
 
 - Briefly sketch the overall algorithm you will use.
