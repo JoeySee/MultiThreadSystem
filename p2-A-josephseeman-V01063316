@@ -10,7 +10,7 @@ One to track if the count of trains standing by for queueing is being modified.
 One to track if a train is crossing the track.
 
 - Will the main thread be idle? If not, what will it be doing?
-It will be idle.
+It will be idle after all threads are created and timer start signal is sent.
 
 - How are you going to represent stations (which are collections of loaded trains ready to depart)? That is, what type of data structure will you use?
 Pair of priority queues representing east- and west-bound traffic.
@@ -28,6 +28,11 @@ Convars and condition checking.
     - Sent when a train crosses the track.
     - Tied to the crossing mutex.
     - Determine if train of current thread should cross and send it if it should.
+
+3. timer_start
+    - Sent when all threads are loaded
+    - N/A
+    - Tells threads to start their local timers.
 
 
 - Briefly sketch the overall algorithm you will use.
