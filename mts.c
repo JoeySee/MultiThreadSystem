@@ -114,8 +114,8 @@ int main(int argc, char** argv)
         new_train->crossing_time = buffer[2];
 
         // TESTING: print train
-        printf("Train %d is going %d (1 for west, 0 for east) with priority %d (1 for high, 0 for low). Loaded in %lfs and crosses in %lfs\n", 
-            new_train->uid, new_train->is_westbound, new_train->is_high_priority, new_train->loading_time/10.0, new_train->crossing_time/10.0);
+        printf("Train %d is going %s with %s priority. Loaded in %lfs and crosses in %lfs\n", new_train->uid, 
+            new_train->is_westbound ? "west" : "east", new_train->is_high_priority ? "high" : "low", new_train->loading_time/10.0, new_train->crossing_time/10.0);
 
         // printf("thread created with code %d.\n", pthread_create(new_train->thread, NULL, train, (void*)new_train));
 
