@@ -18,6 +18,8 @@ Pair of priority queues representing east- and west-bound traffic.
 - How are you going to ensure that data structures in your program will not be modified concurrently?
 Convars and condition checking.
 
+Comment: Please elaborate on the use of convars and mutexes.
+
 - How many convars are you going to use?
 1. loading_done
     - Sent when loading of a train into its queue is completed.
@@ -36,6 +38,7 @@ Convars and condition checking.
 
 
 - Briefly sketch the overall algorithm you will use.
-Main thread generates the structs for each train and passes them to threads. Each thread waits for it's loading time then inserts itself into its station's queue. They then wait for the loading of all trains to be completed and for the main track to be free, and proceed across the track if it is at the front of its queue and does not have to yield. 
+Main thread generates the structs for each train and passes them to threads. Each thread waits for it's loading time then inserts itself into its station's queue. They then wait for the loading of all trains to be completed and for the main track to be free, and proceed across the track if it is at the front of its queue and does not have to yield.
 
 
+Feedback: Please make sure it can handle different train priorities, different loading times and directions, and avoid deadlocks. +2.0
