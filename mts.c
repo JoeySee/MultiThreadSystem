@@ -26,32 +26,29 @@ typedef struct train{
 // TEMPORARY: Only one linkedlist for data storage
 train_info* root;
 
-int* output_temp;
-
 // Train thread method
 void *train(void* train_void)
 {
-    *output_temp += 1;
-    printf("In thread\n");
     train_info* train = (train_info*)train_void;
+    printf("In thread for train %d\n", train->uid);
     // root = train->previous;
     // free(train->thread);
+
+    // Arbitrarily lock crossing and release it immediately
+    while(train->start_time->tv_sec == -1) {
+        pthread_cond_wait(&timer_start, &crossing);
+    }// while
+    pthread_mutex_unlock(&crossing);
     
     // Hold until all threads are ready
-    // while(train->start_time->tv_sec == -1){
-    //     printf("rechecking!\n");
-    //     usleep(10000);   
-    // }
+    // 
     printf("loading start for train %d!\n", train->uid);
 
     usleep(train->loading_time*100000);
 
-    printf("loading done for train %d!\n", train->uid);
+    printf("loading done for train %d!\n", train->uid);    
 
-    // free(train);
-    // pthread_exit(0);
-    
-    
+    return NULL;
 }// train
 
 int main(int argc, char** argv)
@@ -68,9 +65,15 @@ int main(int argc, char** argv)
     struct timespec start_time = {-1, -1};
     // printf("start_time initial value: %lds, %ldns\n", start_time.tv_sec, start_time.tv_nsec);
 
-    // TEMPORARY: output init
-    int output_val = 0;
-    output_temp = &output_val;
+    // mutex and convar init
+    pthread_cond_init(&loading_done, NULL);
+    pthread_cond_init(&sending_done, NULL);
+    pthread_cond_init(&timer_start, NULL);
+
+    pthread_mutex_init(&west_queue, NULL);
+    pthread_mutex_init(&east_queue, NULL);
+    pthread_mutex_init(&standby, NULL);
+    pthread_mutex_init(&crossing, NULL);
 
     // Load train template with default values for size allocation
     train_info train_template = {-1, -1, -1, -1, -1, NULL, &standby_count, &start_time, (pthread_t*)pthread_self()};
@@ -118,19 +121,24 @@ int main(int argc, char** argv)
             new_train->is_westbound ? "west" : "east", new_train->is_high_priority ? "high" : "low", new_train->loading_time/10.0, new_train->crossing_time/10.0);
 
         // printf("thread created with code %d.\n", pthread_create(new_train->thread, NULL, train, (void*)new_train));
-
-        pthread_create(new_train->thread, NULL, train, (void*)new_train);
+        pthread_t* new_thread = malloc(sizeof(pthread_t));
+        pthread_create(new_thread, NULL, train, (void*)new_train);
+        new_train->thread = new_thread;
 
         root = new_train;
         // Prepare for next train
         train_counter++;
     }// while
 
+    // sleep(0.5);
+
     printf("loading started for all trains:\n");
-    // clock_gettime(CLOCK_MONOTONIC, &start_time);
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    pthread_cond_broadcast(&timer_start);
+    
     // printf("value of start_time: %d\n", start_time->tv_sec);
 
-    // sleep(500);
+    // sleep(15);
 
     // Change to wait for either west- or east-bound queue
     train_info* temp;
@@ -141,6 +149,7 @@ int main(int argc, char** argv)
         temp = root;
         root = root->previous;
         // printf("is root null? %s\n", root == NULL ? "yes" : "no");
+        free(temp->thread);
         free(temp);
     }// while
 
