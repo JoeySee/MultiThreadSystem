@@ -8,8 +8,8 @@
 
 #define NS_PER_SEC 1000000000
 
-pthread_cond_t loading_done, sending_done, timer_start;
-pthread_mutex_t east_queue, west_queue, standby, crossing; 
+pthread_cond_t loading_done, crossing_done, timer_start; 
+pthread_mutex_t queue_mutex, standby_mutex, crossing_mutex;  // In order: eastbound/westbound queues, standby, crossing
 
 typedef struct train{
     int uid;                    // train id (starting at 0)
@@ -23,30 +23,58 @@ typedef struct train{
     pthread_t* thread;          // pointer to thread representing this train
 } train_info;
 
-// TEMPORARY: Only one linkedlist for data storage
-train_info* root;
+// roots of train queues
+train_info* head;
+
+// Insert to queue where the given train_info pointer is the head
+// new is the train to be inserted
+// prev_direction is the east/west direction of the previous train
+train_info* insert_into_queue(train_info* head, train_info* new, int prev_direction)
+{   
+    // Condition handling in order: priority, alternation, starvation avoidance
+    if(new->is_high_priority > head->is_high_priority || (new->is_westbound != head->is_westbound && head->is_westbound == prev_direction))
+}// insert_into_queue
 
 // Train thread method
 void *train(void* train_void)
 {
     train_info* train = (train_info*)train_void;
-    printf("In thread for train %d\n", train->uid);
-    // root = train->previous;
-    // free(train->thread);
 
+    // Hold until all threads are ready
     // Arbitrarily lock crossing and release it immediately
     while(train->start_time->tv_sec == -1) {
-        pthread_cond_wait(&timer_start, &crossing);
+        pthread_cond_wait(&timer_start, &crossing_mutex);
     }// while
-    pthread_mutex_unlock(&crossing);
+    pthread_mutex_unlock(&crossing_mutex);
     
-    // Hold until all threads are ready
-    // 
-    printf("loading start for train %d!\n", train->uid);
+    
+    // printf("loading start for train %d!\n", train->uid);
 
     usleep(train->loading_time*100000);
 
-    printf("loading done for train %d!\n", train->uid);    
+    // printf("loading done for train %d!\n", train->uid);    
+
+    // Insert train into queue
+    pthread_mutex_lock(standby_count);
+    while(*train->standby_count)
+    {
+        pthread_cond_wait(&loading_done, &queue_mutex);
+    }// while
+    *(train->standby_count)++;
+    pthread_mutex_unlock(standby_count);
+
+    // TODO: Insertion into queue
+
+    pthread_mutex_lock(standby_count);
+    *(train->standby_count)--;
+    pthread_mutex_unlock(standby_count);
+    pthread_cond_signal(&loading_done);
+
+    // Check if this train can cross
+    while(head != NULL && head->uid && head)
+    {
+        pthread_cond_wait(&crossing_done, );
+    }// while
 
     return NULL;
 }// train
@@ -70,10 +98,9 @@ int main(int argc, char** argv)
     pthread_cond_init(&sending_done, NULL);
     pthread_cond_init(&timer_start, NULL);
 
-    pthread_mutex_init(&west_queue, NULL);
-    pthread_mutex_init(&east_queue, NULL);
-    pthread_mutex_init(&standby, NULL);
-    pthread_mutex_init(&crossing, NULL);
+    pthread_mutex_init(&queue_mutex, NULL);
+    pthread_mutex_init(&standby_mutex, NULL);
+    pthread_mutex_init(&crossing_mutex, NULL);
 
     // Load train template with default values for size allocation
     train_info train_template = {-1, -1, -1, -1, -1, NULL, &standby_count, &start_time, (pthread_t*)pthread_self()};
@@ -91,7 +118,7 @@ int main(int argc, char** argv)
         memcpy(new_train, &train_template, sizeof(train_template));
 
         new_train->uid = train_counter;
-        new_train->previous = root;
+        // new_train->previous = head;
         
         // Read direction and priority
         switch((char)buffer[0])
@@ -125,7 +152,6 @@ int main(int argc, char** argv)
         pthread_create(new_thread, NULL, train, (void*)new_train);
         new_train->thread = new_thread;
 
-        root = new_train;
         // Prepare for next train
         train_counter++;
     }// while
@@ -142,15 +168,17 @@ int main(int argc, char** argv)
 
     // Change to wait for either west- or east-bound queue
     train_info* temp;
-    while(root != NULL)
+    while(head != NULL)
     {
-        printf("joining train %d\n", root->uid);
-        pthread_join(*root->thread, 0);
-        temp = root;
-        root = root->previous;
-        // printf("is root null? %s\n", root == NULL ? "yes" : "no");
+        // Join head of queue
+        temp = head;
+        head = temp->previous;  
+        pthread_join(*temp->thread, 0);  
         free(temp->thread);
         free(temp);
+
+        // printf("is root null? %s\n", root == NULL ? "yes" : "no");
+        
     }// while
 
     fclose(fptr);
