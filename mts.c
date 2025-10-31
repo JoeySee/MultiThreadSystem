@@ -18,7 +18,6 @@ typedef struct train{
     int is_westbound;           // true if westbound, false if eastbound                  
     int is_high_priority;       // priority tracking
     struct train* previous;     // pointer to previous train in this train's queue
-    struct timespec* start_time;// pointer to struct storing the start time for the program
     pthread_t* thread;          // pointer to thread representing this train
 } train_info;
 
@@ -26,11 +25,26 @@ typedef struct train{
 train_info* head_westbound;
 train_info* head_eastbound;
 
-int standby_count;          // shared variable counting number of trains being loaded into queues
-int last_direction;         // shared variable counting number of trains waiting to be loaded into queues
-int consecutive_count;      // shared variable counting number of trains that went the same direction
-int crossing_count;         // counter for number of trains waiting to cross
-int crossed_count;          // number of trains that have crossed
+int* standby_count;             // shared variable counting number of trains being loaded into queues
+int* last_direction;            // shared variable counting number of trains waiting to be loaded into queues
+int* consecutive_count;         // shared variable counting number of trains that went the same direction
+int* crossing_count;            // counter for number of trains waiting to cross
+int* crossed_count;             // number of trains that have crossed
+train_info* join_buffer;        // buffer for joining of trains
+FILE* fptrW;                    // pointer to output file
+struct timespec* start_time;    // pointer to struct storing the start time for the program
+
+// Get current simulation time
+void get_time(char* buffer)
+{
+    struct timespec current_time;
+    clock_gettime(CLOCK_MONOTONIC, &current_time);
+    int hours = (current_time.tv_sec/(60*60)-start_time->tv_sec/(60*60))%100;
+    int mins = (current_time.tv_sec/60-start_time->tv_sec/60)%60;
+    int secs = (current_time.tv_sec-start_time->tv_sec)%60;
+    int dsecs = (current_time.tv_nsec/10000000-start_time->tv_nsec/100000000)%100;
+    snprintf(buffer, sizeof(char)*11, "%02d:%02d:%02d.%01d", hours, mins, secs, dsecs);
+}// get_time()
 
 // Insert to queue where the given train_info pointer is the head
 // new is the train to be inserted
@@ -56,28 +70,21 @@ void *train(void* train_void)
 
     // Hold until all threads are ready
     // Arbitrarily lock crossing and release it immediately
-    while(train->start_time->tv_sec == -1) {
+    while(start_time->tv_sec == -1) {
         pthread_cond_wait(&timer_start, &crossing_mutex);
     }// while
     pthread_mutex_unlock(&crossing_mutex);
-    
-    
-    printf("loading start for train %d!\n", train->uid);
 
-    usleep(train->loading_time*100000);
-
-    printf("loading done for train %d!\n", train->uid);    
+    usleep(train->loading_time*100000); 
 
     // Insert train into queue
     pthread_mutex_lock(&standby_mutex);
-    while(standby_count)
+    while(*standby_count)
     {
         pthread_cond_wait(&loading_done, &queue_mutex);
     }// while
-    standby_count++;
+    (*standby_count)++;
     pthread_mutex_unlock(&standby_mutex);
-
-    printf("Train %d being inserted\n", train->uid);
 
     if(train->is_westbound)
     {
@@ -88,40 +95,42 @@ void *train(void* train_void)
     }
 
     pthread_mutex_lock(&standby_mutex);
-    standby_count--;
+    (*standby_count)--;
     pthread_mutex_unlock(&standby_mutex);
     pthread_mutex_unlock(&queue_mutex);
     pthread_cond_signal(&loading_done);
 
-    printf("Train %d done insertion with west %d and east %d\n", train->uid, head_westbound==NULL?-1:head_westbound->uid, 
-        head_eastbound==NULL?-1:head_eastbound->uid);    
+    char time_buffer[11];
+    get_time(time_buffer);
+    fprintf(fptrW, "%11s Train %2d is ready to go %4s\n", time_buffer, train->uid, 
+            train->is_westbound ? "West" : "East");
 
     // Check if this train can cross
     // Checks in order: only train, next train, auto proceed if other head is null, starvation checking, priority, alternation
     pthread_mutex_lock(&crossing_mutex);
-    crossing_count++;
-    while(crossing_count-1 && (((head_westbound != NULL && head_westbound->uid == train->uid) || 
-            (head_eastbound != NULL && head_eastbound->uid == train->uid)) ||
-            head_eastbound == NULL || head_westbound == NULL ||
-            (consecutive_count < 2 && train->is_westbound == last_direction) &&
+    (*crossing_count)++;
+    while((*crossing_count)-1 && (((head_westbound != NULL && head_westbound->uid == train->uid) || 
+            (head_eastbound != NULL && head_eastbound->uid == train->uid)) &&
+            (head_eastbound == NULL || head_westbound == NULL ||
+            (*consecutive_count < 2 && train->is_westbound == *last_direction) &&
             ((train->is_westbound && train->is_high_priority >= head_eastbound->is_high_priority) || 
             (!train->is_westbound && train->is_high_priority >= head_westbound->is_high_priority)) &&
-            head_westbound->is_high_priority == head_eastbound->is_high_priority && train->is_westbound == last_direction)
+            head_westbound->is_high_priority == head_eastbound->is_high_priority && train->is_westbound == *last_direction))
         )
     {
         pthread_mutex_unlock(&crossing_mutex);
         pthread_cond_wait(&crossing_done, &crossing_mutex);
-        printf("checking for train %d with %d trains waiting\n", train->uid, crossing_count);
     }// while
 
-    if(last_direction == train->is_westbound)
+    // Update fields related to last train that crossed
+    if(*last_direction == train->is_westbound)
     {
-        consecutive_count = 0;
+        *consecutive_count = 0;
     }// if
-    consecutive_count++;
-    last_direction = train->is_westbound;
+    (*consecutive_count)++;
+    *last_direction = train->is_westbound;
     
-
+    // Update relevant queue
     pthread_mutex_lock(&queue_mutex);
     if(train->is_westbound) 
     {
@@ -133,26 +142,28 @@ void *train(void* train_void)
     pthread_mutex_unlock(&queue_mutex);
     
     // Cross
-    printf("Train %d is crossing!\n", train->uid);
+
+    get_time(time_buffer);
+    fprintf(fptrW, "%11s Train %2d is ON the main track going %4s\n", time_buffer, train->uid, 
+            train->is_westbound ? "West" : "East");
+
     usleep(train->crossing_time*100000);
+
+    fprintf(fptrW, "%11s Train %2d is OFF the main track after going %4s\n", time_buffer, train->uid, 
+            train->is_westbound ? "West" : "East");
 
     pthread_mutex_unlock(&crossing_mutex);
 
-    printf("after train %d is done, west is %d, east is %d\n", train->uid, head_westbound==NULL?-1:head_westbound->uid, 
-        head_eastbound==NULL?-1:head_eastbound->uid);
-
+    // Update count of trains that have crossed and load buffer to join this train to main
     pthread_mutex_lock(&crossed_mutex);
-    crossed_count++;
+    (*crossed_count)++;
+    join_buffer = train;
+    // Update count of actively crossing trains
     pthread_mutex_unlock(&crossed_mutex);
-
-    crossing_count--;
-
-    free(train->thread);
-    free(train);
+    (*crossing_count)--;
     pthread_cond_broadcast(&crossing_done);
-    pthread_exit(0);
-
-    
+    // Exit thread
+    pthread_exit(0);    
 }// train
 
 int main(int argc, char** argv)
@@ -162,7 +173,8 @@ int main(int argc, char** argv)
         printf("Usage: %s filename\n", argv[0]);
         exit(1);
     }
-    FILE* fptr = fopen(argv[1], "r");
+    FILE* fptrR = fopen(argv[1], "r");
+    fptrW = fopen("output.txt", "w");
 
     
     // printf("start_time initial value: %lds, %ldns\n", start_time.tv_sec, start_time.tv_nsec);
@@ -177,20 +189,30 @@ int main(int argc, char** argv)
     pthread_mutex_init(&crossing_mutex, NULL);
     pthread_mutex_init(&crossed_mutex, NULL);
 
-    // Global values for trains
-    standby_count = 0;
-    struct timespec start_time = {-1, -1};
+
+    // Global value init for trains
+    int standby_default = 0;
+    standby_count = &standby_default;
+    int last_direction_default = 0;
+    last_direction = &last_direction_default;
+    int consecutive_default = 0;
+    consecutive_count = &consecutive_default;
+    int crossing_default = 0;
+    crossing_count = &crossing_default;
+    int crossed_default = 0;
+    crossed_count = &crossed_default;
+    struct timespec start_default = {-1, -1};
+    start_time = &start_default;
+
 
     // Load train template with default values
-    train_info train_template = {-1, -1, -1, -1, -1, NULL, &start_time, (pthread_t*)pthread_self()};
+    train_info train_template = {-1, -1, -1, -1, -1, NULL, (pthread_t*)pthread_self()};
 
     // Train creation
     int train_counter = 0;
     int buffer[3];
-    while(fscanf(fptr, "%c %d %d\n", (char*)&buffer[0], &buffer[1], &buffer[2]) == 3)
+    while(fscanf(fptrR, "%c %d %d\n", (char*)&buffer[0], &buffer[1], &buffer[2]) == 3)
     {
-        printf("Start of new loop!\n");
-
         // Copy new train struct
         train_info* new_train = malloc(sizeof(train_info));
         // train_info* new_train;
@@ -205,15 +227,19 @@ int main(int argc, char** argv)
             case 'e':
                 new_train->is_westbound = 0;
                 new_train->is_high_priority = 0;
+                break;
             case 'E':
                 new_train->is_westbound = 0;
                 new_train->is_high_priority = 1;
+                break;
             case 'w':
                 new_train->is_westbound = 1;
                 new_train->is_high_priority = 0;
+                break;
             case 'W':
                 new_train->is_westbound = 1;
                 new_train->is_high_priority = 1;
+                break;
         }// switch
 
         // Read loading time
@@ -237,19 +263,20 @@ int main(int argc, char** argv)
 
     // sleep(0.5);
 
-    printf("loading started for all trains:\n");
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    clock_gettime(CLOCK_MONOTONIC, start_time);
     pthread_cond_broadcast(&timer_start);
     
     // Check if there are any more trains each time one crosses
     pthread_mutex_lock(&crossed_mutex);
-    while(crossed_count < train_counter)
+    while(*crossed_count < train_counter)
     {
-        printf("checking\n");
         pthread_mutex_unlock(&crossed_mutex);
         pthread_cond_wait(&crossing_done, &crossed_mutex);
-        pthread_cond_signal(&crossing_done);
-    }
+        pthread_join(*join_buffer->thread, 0);
+        free(join_buffer->thread);
+        free(join_buffer);
+    }// while
 
-    fclose(fptr);
+    fclose(fptrR);
+    fclose(fptrW);
 }// main 
