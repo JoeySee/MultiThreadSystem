@@ -28,7 +28,6 @@ train_info* head_eastbound;
 int* standby_count;             // shared variable counting number of trains being loaded into queues
 int* last_direction;            // shared variable counting number of trains waiting to be loaded into queues
 int* consecutive_count;         // shared variable counting number of trains that went the same direction
-int* crossing_count;            // counter for number of trains waiting to cross
 int* crossed_count;             // number of trains that have crossed
 train_info* join_buffer;        // buffer for joining of trains
 FILE* fptrW;                    // pointer to output file
@@ -43,6 +42,11 @@ void get_time(char* buffer)
     int mins = (current_time.tv_sec/60-start_time->tv_sec/60)%60;
     int secs = (current_time.tv_sec-start_time->tv_sec)%60;
     int dsecs = (current_time.tv_nsec/10000000-start_time->tv_nsec/100000000)%100;
+    if(dsecs < 0)
+    {
+        secs -= 1;
+        dsecs += 10;
+    }
     snprintf(buffer, sizeof(char)*11, "%02d:%02d:%02d.%01d", hours, mins, secs, dsecs);
 }// get_time()
 
@@ -55,12 +59,13 @@ train_info* insert_into_queue(train_info* head, train_info* new)
     // Replace head if true
     // Conditions in order: priority checking, loading times, order in file
     if(head == NULL || new->is_high_priority > head->is_high_priority || new->loading_time < head->loading_time ||
-        (new->loading_time == new->loading_time && new->uid < head->uid)) 
+        (new->loading_time == head->loading_time && new->uid > head->uid)) 
     {
         new->previous = head;
         return new;
     }// if
-    return insert_into_queue(head->previous, new);
+    head->previous = insert_into_queue(head->previous, new);
+    return head;
 }// insert_into_queue
 
 // Train thread method
@@ -84,7 +89,7 @@ void *train(void* train_void)
         pthread_cond_wait(&loading_done, &queue_mutex);
     }// while
     (*standby_count)++;
-    pthread_mutex_unlock(&standby_mutex);
+    // pthread_mutex_unlock(&standby_mutex);
 
     if(train->is_westbound)
     {
@@ -94,7 +99,7 @@ void *train(void* train_void)
         head_eastbound = insert_into_queue(head_eastbound, train);
     }
 
-    pthread_mutex_lock(&standby_mutex);
+    // pthread_mutex_lock(&standby_mutex);
     (*standby_count)--;
     pthread_mutex_unlock(&standby_mutex);
     pthread_mutex_unlock(&queue_mutex);
@@ -102,20 +107,27 @@ void *train(void* train_void)
 
     char time_buffer[11];
     get_time(time_buffer);
-    fprintf(fptrW, "%11s Train %2d is ready to go %4s\n", time_buffer, train->uid, 
+    fprintf(fptrW, "%10s Train %2d is ready to go %4s\n", time_buffer, train->uid, 
             train->is_westbound ? "West" : "East");
 
     // Check if this train can cross
-    // Checks in order: only train, next train, auto proceed if other head is null, starvation checking, priority, alternation
+    
+    // Continue loop if none of the conditions are true:
+    // Checks in order: is train being inserted, starvation checking, next train, 
+    // auto proceed if other head is null, priority, alternation
     pthread_mutex_lock(&crossing_mutex);
-    (*crossing_count)++;
-    while((*crossing_count)-1 && (((head_westbound != NULL && head_westbound->uid == train->uid) || 
-            (head_eastbound != NULL && head_eastbound->uid == train->uid)) &&
-            (head_eastbound == NULL || head_westbound == NULL ||
-            (*consecutive_count < 2 && train->is_westbound == *last_direction) &&
-            ((train->is_westbound && train->is_high_priority >= head_eastbound->is_high_priority) || 
-            (!train->is_westbound && train->is_high_priority >= head_westbound->is_high_priority)) &&
-            head_westbound->is_high_priority == head_eastbound->is_high_priority && train->is_westbound == *last_direction))
+    while((head_eastbound != NULL && *consecutive_count >= 2 && *last_direction == train->is_westbound)
+        ||
+            (!((head_westbound != NULL && head_westbound->uid == train->uid) || 
+            (head_eastbound != NULL && head_eastbound->uid == train->uid))
+            &&
+            !(head_eastbound == NULL || head_westbound == NULL)
+            &&
+            !((train->is_westbound && train->is_high_priority >= head_eastbound->is_high_priority) ||
+            (train->is_westbound && train->is_high_priority >= head_eastbound->is_high_priority))
+            &&
+            !(head_westbound->is_high_priority == head_eastbound->is_high_priority && 
+            train->is_westbound == *last_direction))
         )
     {
         pthread_mutex_unlock(&crossing_mutex);
@@ -123,13 +135,13 @@ void *train(void* train_void)
     }// while
 
     // Update fields related to last train that crossed
-    if(*last_direction == train->is_westbound)
+    if(*last_direction != train->is_westbound)
     {
         *consecutive_count = 0;
     }// if
     (*consecutive_count)++;
     *last_direction = train->is_westbound;
-    
+
     // Update relevant queue
     pthread_mutex_lock(&queue_mutex);
     if(train->is_westbound) 
@@ -144,12 +156,12 @@ void *train(void* train_void)
     // Cross
 
     get_time(time_buffer);
-    fprintf(fptrW, "%11s Train %2d is ON the main track going %4s\n", time_buffer, train->uid, 
+    fprintf(fptrW, "%10s Train %2d is ON the main track going %4s\n", time_buffer, train->uid, 
             train->is_westbound ? "West" : "East");
 
     usleep(train->crossing_time*100000);
 
-    fprintf(fptrW, "%11s Train %2d is OFF the main track after going %4s\n", time_buffer, train->uid, 
+    fprintf(fptrW, "%10s Train %2d is OFF the main track after going %4s\n", time_buffer, train->uid, 
             train->is_westbound ? "West" : "East");
 
     pthread_mutex_unlock(&crossing_mutex);
@@ -160,7 +172,6 @@ void *train(void* train_void)
     join_buffer = train;
     // Update count of actively crossing trains
     pthread_mutex_unlock(&crossed_mutex);
-    (*crossing_count)--;
     pthread_cond_broadcast(&crossing_done);
     // Exit thread
     pthread_exit(0);    
@@ -175,9 +186,6 @@ int main(int argc, char** argv)
     }
     FILE* fptrR = fopen(argv[1], "r");
     fptrW = fopen("output.txt", "w");
-
-    
-    // printf("start_time initial value: %lds, %ldns\n", start_time.tv_sec, start_time.tv_nsec);
 
     // mutex and convar init
     pthread_cond_init(&loading_done, NULL);
@@ -197,8 +205,6 @@ int main(int argc, char** argv)
     last_direction = &last_direction_default;
     int consecutive_default = 0;
     consecutive_count = &consecutive_default;
-    int crossing_default = 0;
-    crossing_count = &crossing_default;
     int crossed_default = 0;
     crossed_count = &crossed_default;
     struct timespec start_default = {-1, -1};
@@ -248,11 +254,6 @@ int main(int argc, char** argv)
         // Read crossing time
         new_train->crossing_time = buffer[2];
 
-        // TESTING: print train
-        printf("Train %d is going %s with %s priority. Loaded in %lfs and crosses in %lfs\n", new_train->uid, 
-            new_train->is_westbound ? "west" : "east", new_train->is_high_priority ? "high" : "low", new_train->loading_time/10.0, new_train->crossing_time/10.0);
-
-        // printf("thread created with code %d.\n", pthread_create(new_train->thread, NULL, train, (void*)new_train));
         pthread_t* new_thread = malloc(sizeof(pthread_t));
         pthread_create(new_thread, NULL, train, (void*)new_train);
         new_train->thread = new_thread;
@@ -275,6 +276,7 @@ int main(int argc, char** argv)
         pthread_join(*join_buffer->thread, 0);
         free(join_buffer->thread);
         free(join_buffer);
+        pthread_cond_signal(&crossing_done);
     }// while
 
     fclose(fptrR);
